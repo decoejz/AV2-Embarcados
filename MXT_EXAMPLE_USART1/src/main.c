@@ -353,17 +353,17 @@ void update_screen(uint32_t tx, uint32_t ty) {
 		}
 	}*/
 	
-	//font_draw_text(&digital52, "HH:MM", 150, 50, 1);
+	font_draw_text(&digital52, "HH:MM", 50, 150, 1);
 	
 	char temperature[32];
 	int tempint = 10;
-	//sprintf(temperature,"%02d",tempint);
-	//font_draw_text(&digital52, temperature, 200, 100, 1);
+	sprintf(temperature,"%02d",tempint);
+	font_draw_text(&digital52, temperature, 200, 260, 1);
 	
 	char potencia[32];
 	int potint = 10;
-	//sprintf(potencia,"%02d",potint);
-	//font_draw_text(&digital52, potencia, 200, 150, 1);
+	sprintf(potencia,"%02d",potint);
+	font_draw_text(&digital52, potencia, 200, 360, 1);
 	
 }
 
