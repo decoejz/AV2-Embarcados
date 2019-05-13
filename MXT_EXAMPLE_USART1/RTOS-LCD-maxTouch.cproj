@@ -731,6 +731,18 @@
     <Folder Include="src\config\" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="src\ar.h">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\soneca.h">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\termometro.h">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\tfont.h">
+      <SubType>compile</SubType>
+    </Compile>
     <None Include="src\asf.h">
       <SubType>compile</SubType>
     </None>
@@ -1464,6 +1476,9 @@
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="src\ASF\thirdparty\freertos\freertos-8.2.3\Source\timers.c">
+      <SubType>compile</SubType>
+    </Compile>
+    <Compile Include="src\digital521.h">
       <SubType>compile</SubType>
     </Compile>
     <Compile Include="src\main.c">
