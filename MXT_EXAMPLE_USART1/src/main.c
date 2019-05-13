@@ -97,6 +97,33 @@
 #include "soneca.h"
 #include "termometro.h"
 
+#include "stdio_serial.h"
+#include "conf_clock.h"
+
+#define PIO_PWM_0 PIOA
+#define ID_PIO_PWM_0 ID_PIOA
+#define MASK_PIN_PWM_0 (1 << 0)
+
+/** PWM frequency in Hz */
+#define PWM_FREQUENCY      1000
+/** Period value of PWM output waveform */
+#define PERIOD_VALUE       100
+/** Initial duty cycle value */
+#define INIT_DUTY_VALUE    0
+
+#define BUT_PIO         PIOD
+#define BUT_PIO_ID      ID_PIOD
+#define BUT_PIN	        28
+#define BUT_IDX_MASK    (1 << BUT_PIN)
+
+#define BUT_PIO_ID2		ID_PIOC
+#define BUT_PIO2   	    PIOC
+#define BUT_PIN2		31
+#define BUT_IDX_MASK2	(1 << BUT_PIN2)
+
+/** PWM channel instance for LEDs */
+pwm_channel_t g_pwm_channel_led;
+
 /************************************************************************/
 /* LCD + TOUCH                                                          */
 /************************************************************************/
@@ -118,6 +145,12 @@ const uint32_t BUTTON_Y = ILI9488_LCD_HEIGHT/2;
 #define TASK_LCD_STACK_SIZE            (2*1024/sizeof(portSTACK_TYPE))
 #define TASK_LCD_STACK_PRIORITY        (tskIDLE_PRIORITY)
 
+#define TASK_PWM_STACK_SIZE            (2*1024/sizeof(portSTACK_TYPE))
+#define TASK_PWM_STACK_PRIORITY        (tskIDLE_PRIORITY)
+
+#define TASK_AFEC_STACK_SIZE            (2*1024/sizeof(portSTACK_TYPE))
+#define TASK_AFEC_STACK_PRIORITY        (tskIDLE_PRIORITY)
+
 typedef struct {
   uint x;
   uint y;
@@ -129,7 +162,21 @@ tImage termimg;
 
 QueueHandle_t xQueueTouch;
 
+SemaphoreHandle_t pwmSemaphore;
+SemaphoreHandle_t afecSemaphore;
+
 void font_draw_text(tFont *font, const char *text, int x, int y, int spacing);
+void BUT_init(void);
+
+volatile tempint = 0;
+volatile potint = 0;
+uint duty = 0;
+
+volatile uint8_t plus = 0;
+volatile uint8_t less = 0;
+
+volatile bool g_is_resist_conversion_done = false;
+volatile uint32_t g_res_value = 0;
 
 /************************************************************************/
 /* RTOS hooks                                                           */
@@ -344,26 +391,16 @@ void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 	}
 }
 
-void update_screen(uint32_t tx, uint32_t ty) {
-	/*if(tx >= BUTTON_X-BUTTON_W/2 && tx <= BUTTON_X + BUTTON_W/2) {
-		if(ty >= BUTTON_Y-BUTTON_H/2 && ty <= BUTTON_Y) {
-			draw_button(1);
-		} else if(ty > BUTTON_Y && ty < BUTTON_Y + BUTTON_H/2) {
-			draw_button(0);
-		}
-	}*/
-	
+void update_screen() {	
 	font_draw_text(&digital52, "HH:MM", 50, 150, 1);
 	
 	char temperature[32];
-	int tempint = 10;
 	sprintf(temperature,"%02d",tempint);
 	font_draw_text(&digital52, temperature, 200, 260, 1);
 	
 	char potencia[32];
-	int potint = 10;
-	sprintf(potencia,"%02d",potint);
-	font_draw_text(&digital52, potencia, 200, 360, 1);
+	sprintf(potencia,"%d%%",potint);
+	font_draw_text(&digital52, potencia, 180, 360, 1);
 	
 }
 
@@ -424,21 +461,139 @@ void task_mxt(void){
 	}
 }
 
+void task_pwm(void){
+	  /* We are using the semaphore for synchronisation so we create a binary
+        semaphore rather than a mutex.  We must make sure that the interrupt
+        does not attempt to use the semaphore before it is created! */
+	pwmSemaphore = xSemaphoreCreateBinary();
+	BUT_init();
+	
+	for (;;) {
+		if( xSemaphoreTake(pwmSemaphore, ( TickType_t ) 500) == pdTRUE ){
+			if(plus){
+				if(duty<=90){
+					duty+=10;
+				}
+				plus = !plus;
+			}
+			if(less){
+				if(duty>=10){
+					duty-=10;
+				}
+				less = !less;
+			}
+			potint = duty;
+			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
+			update_screen();
+		}
+	}
+}
+
+void task_afec(void){
+	afecSemaphore = xSemaphoreCreateBinary();
+
+	/* Block for 4000ms. */
+	const TickType_t xDelay = 4000 / portTICK_PERIOD_MS;
+	
+	for (;;) {
+		if( xSemaphoreTake(afecSemaphore, ( TickType_t ) 500) == pdTRUE ){
+			g_res_value = afec_channel_get_value(AFEC0, 5);
+			g_is_resist_conversion_done = true;
+			vTaskDelay(xDelay);
+		}
+	}
+}
+
 void task_lcd(void){
   xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
 	configure_lcd();
   
   draw_screen();
-  // draw_button(0);
   touchData touch;
     
   while (true) {  
      if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
-       update_screen(touch.x, touch.y);
-       printf("x:%d y:%d\n", touch.x, touch.y);
+       update_screen();
      }     
   }	 
 }
+
+void PWM0_init(uint channel, uint duty){
+	/* Enable PWM peripheral clock */
+	pmc_enable_periph_clk(ID_PWM0);
+
+	/* Disable PWM channels for LEDs */
+	pwm_channel_disable(PWM0, PIN_PWM_LED0_CHANNEL);
+
+	/* Set PWM clock A as PWM_FREQUENCY*PERIOD_VALUE (clock B is not used) */
+	pwm_clock_t clock_setting = {
+		.ul_clka = PWM_FREQUENCY * PERIOD_VALUE,
+		.ul_clkb = 0,
+		.ul_mck = sysclk_get_peripheral_hz()
+	};
+	
+	pwm_init(PWM0, &clock_setting);
+
+	/* Initialize PWM channel for LED0 */
+	/* Period is left-aligned */
+	g_pwm_channel_led.alignment = PWM_ALIGN_CENTER;
+	/* Output waveform starts at a low level */
+	g_pwm_channel_led.polarity = PWM_HIGH;
+	/* Use PWM clock A as source clock */
+	g_pwm_channel_led.ul_prescaler = PWM_CMR_CPRE_CLKA;
+	/* Period value of output waveform */
+	g_pwm_channel_led.ul_period = PERIOD_VALUE;
+	/* Duty cycle value of output waveform */
+	g_pwm_channel_led.ul_duty = duty;
+	g_pwm_channel_led.channel = channel;
+	pwm_channel_init(PWM0, &g_pwm_channel_led);
+	
+	/* Enable PWM channels for LEDs */
+	pwm_channel_enable(PWM0, channel);
+}
+
+static void Button1_Handler(uint32_t id, uint32_t mask)
+{
+	plus = !plus;
+	
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	xSemaphoreGiveFromISR(pwmSemaphore, &xHigherPriorityTaskWoken);
+}
+
+static void Button2_Handler(uint32_t id, uint32_t mask)
+{
+	less = !less;
+	
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	xSemaphoreGiveFromISR(pwmSemaphore, &xHigherPriorityTaskWoken);
+}
+
+void BUT_init(void){
+	/* config. pino botao em modo de entrada */
+	pmc_enable_periph_clk(BUT_PIO_ID);
+	pmc_enable_periph_clk(BUT_PIO_ID2);
+	
+	pio_set_input(BUT_PIO, BUT_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+	pio_set_input(BUT_PIO2, BUT_IDX_MASK2, PIO_PULLUP | PIO_DEBOUNCE);
+
+	/* config. interrupcao em borda de descida no botao do kit */
+	/* indica funcao (but_Handler) a ser chamada quando houver uma interrupção */
+	pio_enable_interrupt(BUT_PIO, BUT_IDX_MASK);
+	pio_enable_interrupt(BUT_PIO2, BUT_IDX_MASK2);
+	
+	pio_handler_set(BUT_PIO, BUT_PIO_ID, BUT_IDX_MASK, PIO_IT_FALL_EDGE, Button1_Handler);
+	pio_handler_set(BUT_PIO2, BUT_PIO_ID2, BUT_IDX_MASK2, PIO_IT_FALL_EDGE, Button2_Handler);
+
+	/* habilita interrupçcão do PIO que controla o botao */
+	/* e configura sua prioridade                        */
+	
+   NVIC_SetPriority(BUT_PIO_ID, 5);
+   NVIC_SetPriority(BUT_PIO_ID2, 5);
+	NVIC_EnableIRQ(BUT_PIO_ID);
+	NVIC_EnableIRQ(BUT_PIO_ID2);
+	
+
+};
 
 /************************************************************************/
 /* main                                                                 */
@@ -457,6 +612,14 @@ int main(void)
 	sysclk_init(); /* Initialize system clocks */
 	board_init();  /* Initialize board */
 	
+	
+	/* Configura pino para ser controlado pelo PWM */
+	pmc_enable_periph_clk(ID_PIO_PWM_0);
+	pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
+	
+	/* inicializa PWM com dutycicle 0*/
+	PWM0_init(0, duty);
+	
 	/* Initialize stdio on USART */
 	stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
 		
@@ -468,6 +631,16 @@ int main(void)
   /* Create task to handler LCD */
   if (xTaskCreate(task_lcd, "lcd", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
     printf("Failed to create test led task\r\n");
+  }
+  
+  /* Create task to afec */
+  if (xTaskCreate(task_afec, "AFEC", TASK_AFEC_STACK_SIZE, NULL, TASK_AFEC_STACK_PRIORITY, NULL) != pdPASS) {
+	  printf("Failed to create test afec task\r\n");
+  }
+  
+  /* Create task to pwm */
+  if (xTaskCreate(task_pwm, "PWM", TASK_PWM_STACK_SIZE, NULL, TASK_PWM_STACK_PRIORITY, NULL) != pdPASS) {
+	  printf("Failed to create test pwm task\r\n");
   }
 
   /* Start the scheduler. */
