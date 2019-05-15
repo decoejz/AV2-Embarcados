@@ -377,11 +377,6 @@ void BUT_init(void){
 	
 	pio_set_input(BUT_PIO, BUT_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
 	pio_set_input(BUT_PIO2, BUT_IDX_MASK2, PIO_PULLUP | PIO_DEBOUNCE);
-
-	/* config. interrupcao em borda de descida no botao do kit */
-	/* indica funcao (but_Handler) a ser chamada quando houver uma interrupção */
-	pio_enable_interrupt(BUT_PIO, BUT_IDX_MASK);
-	pio_enable_interrupt(BUT_PIO2, BUT_IDX_MASK2);
 	
 	pio_handler_set(BUT_PIO, BUT_PIO_ID, BUT_IDX_MASK, PIO_IT_FALL_EDGE, Button1_Handler);
 	pio_handler_set(BUT_PIO2, BUT_PIO_ID2, BUT_IDX_MASK2, PIO_IT_FALL_EDGE, Button2_Handler);
@@ -393,6 +388,11 @@ void BUT_init(void){
 	
 	NVIC_SetPriority(BUT_PIO_ID, 5);
 	NVIC_SetPriority(BUT_PIO_ID2, 5);
+	
+	/* config. interrupcao em borda de descida no botao do kit */
+	/* indica funcao (but_Handler) a ser chamada quando houver uma interrupção */
+	pio_enable_interrupt(BUT_PIO, BUT_IDX_MASK);
+	pio_enable_interrupt(BUT_PIO2, BUT_IDX_MASK2);
 }
 
 void draw_screen(void) {	
@@ -400,7 +400,9 @@ void draw_screen(void) {
 	ili9488_draw_filled_rectangle(0, 0, ILI9488_LCD_WIDTH-1, ILI9488_LCD_HEIGHT-1);
 	
 	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-	ili9488_draw_line(0,240,320,241);
+	ili9488_draw_line(0,239,320,239);
+	ili9488_draw_line(0,240,320,240);
+	ili9488_draw_line(0,241,320,241);
 	
 	ili9488_draw_pixmap(200,10,soneca.width,soneca.height,soneca.data);
 	ili9488_draw_pixmap(5,260,termometro.width,termometro.height,termometro.data);
@@ -495,6 +497,7 @@ void mxt_handler(struct mxt_device *device, uint *x, uint *y)
 /************************************************************************/
 
 void task_mxt(void){
+	xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
   
   	struct mxt_device device; /* Device data container */
   	mxt_init(&device);       	/* Initialize the mXT touch device */
@@ -512,19 +515,17 @@ void task_mxt(void){
 }
 
 void task_lcd(void){
-  xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
-	configure_lcd();
+  configure_lcd();
   
   draw_screen();
-  // draw_button(0);
-  touchData touch;
-    
-  while (true) {  
-     if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
-       update_screen(touch.x, touch.y);
-       printf("x:%d y:%d\n", touch.x, touch.y);
-     }     
-  }	 
+  
+  /* Block for 1000ms. */
+  const TickType_t xDelay = 1000 / portTICK_PERIOD_MS;
+  
+	while (true) {
+		update_screen();
+		vTaskDelay(xDelay);
+	}
 }
 
 void task_afec(void){
@@ -545,20 +546,20 @@ void task_pwm(void){
 	
 	BUT_init();
 	
+	uint deltaP = 5;
+	
 	while(true){
 		if( xSemaphoreTake(pwmPlusSemaphore, ( TickType_t ) 500) == pdTRUE ){
-			if(potint <= 95){
-				potint += 5;
+			if(potint <= 100-deltaP){
+				potint += deltaP;
 			}
 			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, potint);
-			update_screen();
 		}
 		if( xSemaphoreTake(pwmLessSemaphore, ( TickType_t ) 500) == pdTRUE ){
-			if(potint >= 5){
-				potint -= 5;
+			if(potint >= deltaP){
+				potint -= deltaP;
 			}
 			pwm_channel_update_duty(PWM0, &g_pwm_channel_led, potint);
-			update_screen();
 		}
 	}
 }
