@@ -107,6 +107,18 @@ const uint32_t BUTTON_X = ILI9488_LCD_WIDTH/2;
 const uint32_t BUTTON_Y = ILI9488_LCD_HEIGHT/2;
 
 /************************************************************************/
+/* ADC                                                                  */
+/************************************************************************/
+/** The conversion data is done flag */
+volatile bool g_is_conversion_done = false;
+
+/** The conversion data value */
+volatile uint32_t tempint = 0;
+
+/* Canal do sensor de temperatura */
+#define AFEC_CHANNEL_TEMP_SENSOR 0
+
+/************************************************************************/
 /* PWM                                                                  */
 /************************************************************************/
 #define PIO_PWM_0 PIOA
@@ -132,6 +144,8 @@ pwm_channel_t g_pwm_channel_led;
 #define BUT_PIO_ID2		ID_PIOC
 #define BUT_PIN2		31
 #define BUT_IDX_MASK2	(1 << BUT_PIN2)
+
+volatile uint potint = 100;
 	
 /************************************************************************/
 /* RTOS                                                                  */
@@ -156,9 +170,6 @@ typedef struct {
 tImage arimg;
 tImage sonecaimg;
 tImage termimg;
-
-volatile tempint = 0;
-volatile uint potint = 100;
 
 QueueHandle_t xQueueTouch;
 SemaphoreHandle_t pwmPlusSemaphore;
@@ -324,6 +335,11 @@ static void mxt_init(struct mxt_device *device)
 /* funcoes                                                              */
 /************************************************************************/
 
+static void AFEC_Temp_callback(void)
+{
+	tempint = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+}
+
 static void Button1_Handler(void)
 {
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
@@ -395,6 +411,51 @@ void BUT_init(void){
 	pio_enable_interrupt(BUT_PIO2, BUT_IDX_MASK2);
 }
 
+static void config_ADC_TEMP(void){
+/*************************************
+   * Ativa e configura AFEC
+   *************************************/
+  /* Ativa AFEC - 0 */
+	afec_enable(AFEC0);
+
+	/* struct de configuracao do AFEC */
+	struct afec_config afec_cfg;
+
+	/* Carrega parametros padrao */
+	afec_get_config_defaults(&afec_cfg);
+
+	/* Configura AFEC */
+	afec_init(AFEC0, &afec_cfg);
+
+	/* Configura trigger por software */
+	afec_set_trigger(AFEC0, AFEC_TRIG_SW);
+
+	/* configura call back */
+	afec_set_callback(AFEC0, AFEC_INTERRUPT_EOC_0,	AFEC_Temp_callback, 5);
+
+	/*** Configuracao específica do canal AFEC ***/
+	struct afec_ch_config afec_ch_cfg;
+	afec_ch_get_config_defaults(&afec_ch_cfg);
+	afec_ch_cfg.gain = AFEC_GAINVALUE_0;
+	afec_ch_set_config(AFEC0, AFEC_CHANNEL_TEMP_SENSOR, &afec_ch_cfg);
+
+	/*
+	* Calibracao:
+	* Because the internal ADC offset is 0x200, it should cancel it and shift
+	 down to 0.
+	 */
+	afec_channel_set_analog_offset(AFEC0, AFEC_CHANNEL_TEMP_SENSOR, 0x200);
+
+	/***  Configura sensor de temperatura ***/
+	struct afec_temp_sensor_config afec_temp_sensor_cfg;
+
+	afec_temp_sensor_get_config_defaults(&afec_temp_sensor_cfg);
+	afec_temp_sensor_set_config(AFEC0, &afec_temp_sensor_cfg);
+
+	/* Selecina canal e inicializa conversão */
+	afec_channel_enable(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+}
+
 void draw_screen(void) {	
 	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
 	ili9488_draw_filled_rectangle(0, 0, ILI9488_LCD_WIDTH-1, ILI9488_LCD_HEIGHT-1);
@@ -447,12 +508,12 @@ void update_screen() {
 	font_draw_text(&digital52, "HH:MM", 50, 150, 1);
 	
 	char temperature[32];
-	sprintf(temperature,"%02d",tempint);
-	font_draw_text(&digital52, temperature, 200, 260, 1);
+	sprintf(temperature,"%d",tempint);
+	font_draw_text(&digital52, temperature, 150, 260, 1);
 	
 	char potencia[32];
 	sprintf(potencia,"%d%%",100-potint);
-	font_draw_text(&digital52, potencia, 200, 360, 1);
+	font_draw_text(&digital52, potencia, 150, 360, 1);
 	
 }
 
@@ -529,7 +590,12 @@ void task_lcd(void){
 }
 
 void task_afec(void){
-	while(true){}
+	config_ADC_TEMP();
+
+	while (true) {
+		afec_start_software_conversion(AFEC0);
+		vTaskDelay(4000);
+	}
 }
 
 void task_pwm(void){
