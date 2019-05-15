@@ -604,7 +604,7 @@ void task_afec(void){
 
 	while (true) {
 		if( xSemaphoreTake(afecSemaphore, ( TickType_t ) 500) == pdTRUE ){
-			tempint = maxTemp - (((maxResist-conversion) * 50) / (maxResist));
+			tempint = maxTemp - ( ( (maxResist-conversion)*(50-minTemp) ) / (maxResist-minResist) );
 		}
 		afec_start_software_conversion(AFEC0);
 		vTaskDelay(4000);

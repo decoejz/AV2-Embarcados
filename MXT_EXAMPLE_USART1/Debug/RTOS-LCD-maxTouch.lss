@@ -10659,7 +10659,7 @@ void task_afec(void){
 
 	while (true) {
 		if( xSemaphoreTake(afecSemaphore, ( TickType_t ) 500) == pdTRUE ){
-			tempint = maxTemp - (((maxResist-conversion) * 50) / (maxResist));
+			tempint = maxTemp - ( ( (maxResist-conversion)*(50-minTemp) ) / (maxResist-minResist) );
   40430c:	ed9f 9a20 	vldr	s18, [pc, #128]	; 404390 <task_afec+0xf4>
   404310:	ed9f 8a20 	vldr	s16, [pc, #128]	; 404394 <task_afec+0xf8>
   404314:	eddf 8a20 	vldr	s17, [pc, #128]	; 404398 <task_afec+0xfc>
@@ -10684,7 +10684,7 @@ void task_afec(void){
   404336:	47a0      	blx	r4
   404338:	2801      	cmp	r0, #1
   40433a:	d1ee      	bne.n	40431a <task_afec+0x7e>
-			tempint = maxTemp - (((maxResist-conversion) * 50) / (maxResist));
+			tempint = maxTemp - ( ( (maxResist-conversion)*(50-minTemp) ) / (maxResist-minResist) );
   40433c:	4b19      	ldr	r3, [pc, #100]	; (4043a4 <task_afec+0x108>)
   40433e:	edd3 7a00 	vldr	s15, [r3]
   404342:	ee79 7a67 	vsub.f32	s15, s18, s15
