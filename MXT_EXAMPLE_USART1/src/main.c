@@ -118,6 +118,8 @@ volatile uint32_t tempint = 0;
 /* Canal do sensor de temperatura */
 #define AFEC_CHANNEL_TEMP_SENSOR 0
 
+float conversion;
+
 /************************************************************************/
 /* PWM                                                                  */
 /************************************************************************/
@@ -174,6 +176,7 @@ tImage termimg;
 QueueHandle_t xQueueTouch;
 SemaphoreHandle_t pwmPlusSemaphore;
 SemaphoreHandle_t pwmLessSemaphore;
+SemaphoreHandle_t afecSemaphore;
 
 void font_draw_text(tFont *font, const char *text, int x, int y, int spacing);
 
@@ -337,7 +340,9 @@ static void mxt_init(struct mxt_device *device)
 
 static void AFEC_Temp_callback(void)
 {
-	tempint = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+	conversion = afec_channel_get_value(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	xSemaphoreGiveFromISR(afecSemaphore, &xHigherPriorityTaskWoken);
 }
 
 static void Button1_Handler(void)
@@ -506,7 +511,7 @@ void update_screen() {
 	font_draw_text(&digital52, "HH:MM", 50, 150, 1);
 	
 	char temperature[32];
-	sprintf(temperature,"%d",tempint);
+	sprintf(temperature,"%dC",tempint);
 	font_draw_text(&digital52, temperature, 150, 260, 1);
 	
 	char potencia[32];
@@ -588,9 +593,19 @@ void task_lcd(void){
 }
 
 void task_afec(void){
+	afecSemaphore = xSemaphoreCreateBinary();
+	
 	config_ADC_TEMP();
+	
+	int maxResist = 4096;
+	int minResist = 0;
+	int maxTemp = 50;
+	int minTemp = 0;
 
 	while (true) {
+		if( xSemaphoreTake(afecSemaphore, ( TickType_t ) 500) == pdTRUE ){
+			tempint = maxTemp - (((maxResist-conversion) * 50) / (maxResist));
+		}
 		afec_start_software_conversion(AFEC0);
 		vTaskDelay(4000);
 	}
