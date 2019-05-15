@@ -497,14 +497,12 @@ void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 }
 
 void update_screen() {
-	/*if(tx >= BUTTON_X-BUTTON_W/2 && tx <= BUTTON_X + BUTTON_W/2) {
-		if(ty >= BUTTON_Y-BUTTON_H/2 && ty <= BUTTON_Y) {
-			draw_button(1);
-		} else if(ty > BUTTON_Y && ty < BUTTON_Y + BUTTON_H/2) {
-			draw_button(0);
-		}
-	}*/
+	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
+	ili9488_draw_filled_rectangle(50,150,200,205);
+	ili9488_draw_filled_rectangle(150,260,300,315);
+	ili9488_draw_filled_rectangle(150,360,300,415);
 	
+	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
 	font_draw_text(&digital52, "HH:MM", 50, 150, 1);
 	
 	char temperature[32];
@@ -581,7 +579,7 @@ void task_lcd(void){
   draw_screen();
   
   /* Block for 1000ms. */
-  const TickType_t xDelay = 1000 / portTICK_PERIOD_MS;
+  const TickType_t xDelay = 2000 / portTICK_PERIOD_MS;
   
 	while (true) {
 		update_screen();
@@ -612,7 +610,7 @@ void task_pwm(void){
 	
 	BUT_init();
 	
-	uint deltaP = 5;
+	uint deltaP = 10;
 	
 	while(true){
 		if( xSemaphoreTake(pwmPlusSemaphore, ( TickType_t ) 500) == pdTRUE ){
